@@ -167,10 +167,11 @@ class TestGraphProbeStop:
             probe._node = mock_node
             probe._executor = mock_executor
             probe.stop()
-            mock_executor.shutdown.assert_called_once()
+            # rclpy.shutdown called first, then node destroyed
+            mock_shutdown.assert_called_once()
             mock_node.destroy_node.assert_called_once()
             assert probe._node is None
-            mock_shutdown.assert_called_once()
+            assert probe._executor is None
 
     def test_stop_is_safe_when_not_started(self):
         from rosm.probes.graph_probe import GraphProbe

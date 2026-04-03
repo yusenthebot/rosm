@@ -54,19 +54,27 @@ class GraphProbe:
 
     def stop(self) -> None:
         """Shutdown node and spin thread."""
-        if self._executor is not None:
-            self._executor.shutdown()
-
-        if self._node is not None:
-            self._node.destroy_node()
-            self._node = None
-
+        # Order matters: shutdown rclpy first (stops executor spin),
+        # then destroy node, then join thread.
         try:
             import rclpy
             if rclpy.ok():
                 rclpy.shutdown()
         except Exception:
             pass
+
+        if self._spin_thread is not None:
+            self._spin_thread.join(timeout=2.0)
+            self._spin_thread = None
+
+        if self._node is not None:
+            try:
+                self._node.destroy_node()
+            except Exception:
+                pass
+            self._node = None
+
+        self._executor = None
 
     @contextmanager
     def managed(self) -> Generator[GraphProbe, None, None]:
