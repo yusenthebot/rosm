@@ -307,6 +307,20 @@ def clean(dry_run: bool) -> None:
                 console.print(f"  [dim]would kill PID {proc.pid} ({proc.name})[/]")
             else:
                 _kill_pid(proc.pid, signal.SIGTERM, "SIGTERM")
+
+        # Wait briefly, then SIGKILL any survivors
+        if not dry_run:
+            import time
+            time.sleep(1)
+            for proc in zombies:
+                try:
+                    os.kill(proc.pid, 0)  # check if still alive
+                    console.print(f"  [red]PID {proc.pid} ignored SIGTERM, sending SIGKILL[/]")
+                    os.kill(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    pass
     else:
         console.print("[green][+] No zombie processes[/]")
 
