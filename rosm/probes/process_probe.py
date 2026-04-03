@@ -29,6 +29,9 @@ class ProcessProbe:
         "/opt/ros/",
     )
 
+    # DDS discovery multicast port range used by FastRTPS/CycloneDDS
+    _DDS_PORT_RANGE = range(7400, 7500)
+
     # systemd / init PIDs that indicate an orphaned process
     INIT_PIDS: frozenset[int] = frozenset({1})
     # Parent names that indicate an orphaned process (user-session systemd, init)
@@ -53,6 +56,7 @@ class ProcessProbe:
     def snapshot(self) -> list[RosmProcess]:
         """Scan all processes and return ROS2-related ones."""
         results: list[RosmProcess] = []
+        dds_pids = self._get_dds_pids()
 
         try:
             for proc in psutil.process_iter(attrs=self._PROC_ITER_ATTRS):
@@ -60,8 +64,11 @@ class ProcessProbe:
                     info = proc.info
                     cmdline: list[str] = info.get("cmdline") or []
                     exe_path: str = cmdline[0] if cmdline else ""
+                    pid: int = info.get("pid", 0)
 
-                    if not self._is_ros2_process(cmdline, exe_path):
+                    if not self._is_ros2_process(cmdline, exe_path) \
+                            and pid not in dds_pids \
+                            and not self._has_rclpy_loaded(pid):
                         continue
 
                     results.append(self._build_rosm_process(proc, info, cmdline))
@@ -121,6 +128,37 @@ class ProcessProbe:
     # ---------------------------------------------------------------------------
     # Private helpers
     # ---------------------------------------------------------------------------
+
+    def _get_dds_pids(self) -> frozenset[int]:
+        """Return PIDs that hold UDP sockets on DDS discovery ports (7400-7499).
+
+        These are ROS2 processes even if their cmdline has no ROS2 markers.
+        """
+        pids: set[int] = set()
+        try:
+            for conn in psutil.net_connections(kind="udp"):
+                if conn.pid and hasattr(conn, "laddr") and conn.laddr:
+                    if conn.laddr.port in self._DDS_PORT_RANGE:
+                        pids.add(conn.pid)
+        except (psutil.AccessDenied, OSError):
+            pass
+        return frozenset(pids)
+
+    @staticmethod
+    def _has_rclpy_loaded(pid: int) -> bool:
+        """Check if process has rclpy/fastrtps shared libraries loaded.
+
+        Reads /proc/{pid}/maps which is fast (~1ms) and doesn't require
+        elevated privileges for same-user processes.
+        """
+        try:
+            with open(f"/proc/{pid}/maps", "r") as f:
+                for line in f:
+                    if "rclpy" in line or "fastrtps" in line or "rmw_fastrtps" in line:
+                        return True
+        except (OSError, PermissionError):
+            pass
+        return False
 
     def _is_ros2_process(self, cmdline: list[str], exe_path: str) -> bool:
         """Return True if this looks like a ROS2 process."""
